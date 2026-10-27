@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>OldenPerf</AssemblyName>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <GameDir>/data/dev/workspace/SteamLibrary/steamapps/common/Heroes of Might and Magic Olden Era</GameDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(GameDir)/BepInEx/core/*.dll" Exclude="$(GameDir)/BepInEx/core/dobby.dll" Private="false" />
+    <Reference Include="$(GameDir)/BepInEx/interop/*.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="Deploy" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins" />
+  </Target>
+</Project>

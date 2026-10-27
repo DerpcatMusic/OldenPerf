@@ -1,0 +1,24 @@
+.venv/
+dl/
+dump-cs/
+*.csv
+bin/
+obj/
+staging/
+backup-orig/
+cmp/
+dump-il/
+user.reg.bak
+dump-isil/
+dump-dummy/
+decomp/
+symbols.txt
+symmap.err
+tools/symmap/bin/
+tools/symmap/obj/
+
+__pycache__/
+*.pyc
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
