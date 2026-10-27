@@ -25,7 +25,6 @@ static class NativeDepth
     static string _scene = "";
     static float _sceneSince;
     static RenderTexture _testDepth, _reference, _actual;
-    public static long TrimmedCopies { get; private set; }
 
     public static void Init(Harmony harmony)
     {
@@ -103,7 +102,6 @@ static class NativeDepth
         if (_verified && _trimmedCommand == __instance.Pointer)
         {
             bgm.mcb(__instance, new Rect(0, 0, _width, _height), Depth, DepthCopy, true);
-            TrimmedCopies++;
             return false;
         }
         __state = _ready && !_tested && !_queued;
@@ -126,7 +124,7 @@ static class NativeDepth
             bgm.mbz(__instance, rect, DepthCopy, new RenderTargetIdentifier(_reference));
             bgm.mbz(__instance, rect, new RenderTargetIdentifier(_testDepth), new RenderTargetIdentifier(_actual));
             _queued = true; _queuedFrame = Time.frameCount;
-            Stats.ExcludeDiagnostics();
+           
         }
         catch (Exception e) { _tested = true; Cleanup(); Plugin.I.Log.LogWarning("native depth probe failed; original formats retained: " + e.Message); }
     }
@@ -146,7 +144,7 @@ static class NativeDepth
         Texture2D readback = null;
         try
         {
-            Stats.ExcludeDiagnostics();
+           
             readback = new Texture2D(_width, _height, TextureFormat.RGBAFloat, false, true);
             var rect = new Rect(0, 0, _width, _height);
             RenderTexture.active = _reference; readback.ReadPixels(rect, 0, 0, false);
@@ -168,7 +166,7 @@ static class NativeDepth
         {
             RenderTexture.active = active;
             if (readback != null) UnityEngine.Object.Destroy(readback);
-            Cleanup(); Stats.ExcludeDiagnostics();
+            Cleanup();
         }
         return true;
     }

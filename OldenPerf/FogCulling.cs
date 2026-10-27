@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using HarmonyLib;
@@ -65,13 +64,7 @@ static class FogCulling
     static int[] _swappedIdx = Array.Empty<int>();
     static int _swappedCount;
 
-    // Why cells fail inspection: cells per reason, plus the first offender seen. Cleared when cells are rebound.
-    static readonly SortedDictionary<string, int> Rejects = new();
-    static readonly Dictionary<string, string> RejectExample = new();
-    static bool _rejectsLogged;
-
-    static int _hiddenRenderers, _writes, _errors, _swapCalls, _fogChanges;
-    static long _pollTicks, _pollMax, _inspectTicks;
+    static int _errors, _hiddenRenderers;
 
     public static void Init()
     {
@@ -121,7 +114,6 @@ static class FogCulling
             if (_saved.Length < _cells.Length) { _saved = new Bounds[_cells.Length]; _swappedIdx = new int[_cells.Length]; }
             _swapped = bounds; _swappedCount = 0;
             foreach (int i in Deep) { _swappedIdx[_swappedCount] = i; _saved[_swappedCount++] = bounds[i]; bounds[i] = Away; }
-            _swapCalls++;
         }
         catch (Exception e) { Fail("cull prefix", e); }
     }
@@ -141,7 +133,6 @@ static class FogCulling
     // Once per frame: resolve the fog source, detect changes, then update both layers and the batches.
     static void Poll(bxm culler)
     {
-        long start = Stopwatch.GetTimestamp();
         if (!ResolveFog()) { if (Deep.Count > 0 || _hiddenRenderers > 0) RestoreAll(); return; }
         if (!_cellsBound || _culler == null || _culler.Pointer != culler.Pointer) BindCells(culler);
         int n = _w * _h;
@@ -153,13 +144,10 @@ static class FogCulling
             if (_revealed.Length != n) { _revealed = new bool[n]; _sat = new int[(_w + 1) * (_h + 1)]; }
             _union.CopyTo(_revealed, 0);
             SectionCullState.BuildSummedArea(_revealed, _w, _h, _sat);
-            _revision++; _fogChanges++;
+            _revision++;
             Reclassify();
         }
         BatchFogCulling.Update(_sat, _w, _h, _revision);
-        long t = Stopwatch.GetTimestamp() - start;
-        Stats.ModTicks += t;
-        _pollTicks += t; _pollMax = Math.Max(_pollMax, t);
     }
 
     // A tile is revealed when any member of the local side's alliance has revealed it. This is the game's own rule:
@@ -197,7 +185,6 @@ static class FogCulling
                 if (fog.sizeX != own.sizeX || fog.sizeZ != own.sizeZ) throw new InvalidOperationException("ally fog size differs");
                 if (fog.Pointer != own.Pointer) grids.Add(fog.visibilityMap);
             }
-        if (grids.Count != _grids.Count) Plugin.I.Log.LogInfo($"fog sources: {grids.Count} side(s) in the local alliance");
         _data = own; _grids.Clear(); _grids.AddRange(grids);
     }
 
@@ -220,7 +207,6 @@ static class FogCulling
     static void BindCells(bxm culler)
     {
         _culler = culler; _cellsBound = true; _cellLayer = false; Deep.Clear();
-        Rejects.Clear(); RejectExample.Clear(); _rejectsLogged = false;
         var roots = culler.cbhw;
         _cellsX = SectionCullState.CellsAcross(_w);
         int cellsZ = SectionCullState.CellsAcross(_h);
@@ -234,32 +220,6 @@ static class FogCulling
             cells[i] = new Cell { Root = root, Sx = sx, Sz = sz };
         }
         _cells = cells; _inspectCursor = 0; _cellLayer = true;
-        Plugin.I.Log.LogInfo($"fog cells bound: {cells.Length} cells ({_cellsX}x{cellsZ}) on a {_w}x{_h} grid");
-        LogCellGeometry(culler);
-    }
-
-    // Diagnostic: the game's own cell bounds against where each cell's renderers actually are.
-    static void LogCellGeometry(bxm culler)
-    {
-        try
-        {
-            var bounds = culler.cbhx;
-            foreach (int i in new[] { 0, 1, 9, 10, 11, 55, 90, 99 })
-            {
-                if (i >= _cells.Length) continue;
-                var b = bounds[i]; var root = _cells[i].Root; var rp = root.position;
-                float x0 = float.MaxValue, x1 = float.MinValue, z0 = float.MaxValue, z1 = float.MinValue; int n = 0, inside = 0;
-                foreach (var r in root.GetComponentsInChildren<Renderer>(true))
-                {
-                    var p = r.transform.position; n++;
-                    x0 = Math.Min(x0, p.x); x1 = Math.Max(x1, p.x); z0 = Math.Min(z0, p.z); z1 = Math.Max(z1, p.z);
-                    if (Math.Abs(p.x - b.center.x) <= b.extents.x && Math.Abs(p.z - b.center.z) <= b.extents.z) inside++;
-                }
-                Plugin.I.Log.LogInfo(FormattableString.Invariant(
-                    $"fog cell {i} '{root.name}': gameBounds c=({b.center.x:F1},{b.center.y:F1},{b.center.z:F1}) e=({b.extents.x:F1},{b.extents.y:F1},{b.extents.z:F1}) root=({rp.x:F1},{rp.z:F1}) renderers={n} insideGameBounds={inside} pos x=[{x0:F1},{x1:F1}] z=[{z0:F1},{z1:F1}]"));
-            }
-        }
-        catch (Exception e) { Plugin.I.Log.LogWarning("cell geometry: " + e.Message); }
     }
 
     static void DisableCellLayer(string why)
@@ -272,7 +232,7 @@ static class FogCulling
     public static void Tick()
     {
         if (!_installed || !_cellsBound || _cells.Length == 0 || _grids.Count == 0 || !Plugin.I.FogCullingOn.Value) return;
-        long start = Stopwatch.GetTimestamp(), budget = (long)(InspectBudgetMs * Stopwatch.Frequency / 1000);
+        long start = System.Diagnostics.Stopwatch.GetTimestamp(), budget = (long)(InspectBudgetMs * System.Diagnostics.Stopwatch.Frequency / 1000);
         bool any = false;
         for (int step = 0; step < _cells.Length; step++)
         {
@@ -287,11 +247,9 @@ static class FogCulling
                 any = true;
             }
             catch (Exception e) { c.Inspected = true; c.Eligible = false; Fail("inspect " + c.Root?.name, e); }
-            if (Stopwatch.GetTimestamp() - start > budget) break;
+            if (System.Diagnostics.Stopwatch.GetTimestamp() - start > budget) break;
         }
         if (any) Reclassify();
-        long spent = Stopwatch.GetTimestamp() - start;
-        _inspectTicks += spent; Stats.ModTicks += spent;
     }
 
     // Footprints come from Renderer.localBounds and the transform matrix, which do not depend on the cell being active.
@@ -299,26 +257,15 @@ static class FogCulling
     {
         var go = c.Root.gameObject;
         bool eligible = true;
-        var reasons = new HashSet<string>();
-        void Reject(string reason, Component what, string detail)
-        {
-            eligible = false;
-            if (!reasons.Add(reason)) return;
-            Rejects[reason] = Rejects.GetValueOrDefault(reason) + 1;
-            if (!RejectExample.ContainsKey(reason))
-                RejectExample[reason] = $"cell {c.Sx},{c.Sz} '{what?.name}' {what?.GetIl2CppType().Name} {detail}";
-        }
         // Canvas, reflection probes and terrain affect rendering outside their own bounds. Typed queries are filtered
         // natively, so only the few matching components cross into managed code.
-        foreach (var x in go.GetComponentsInChildren<Canvas>(true)) { Reject("canvas", x, ""); break; }
-        foreach (var x in go.GetComponentsInChildren<ReflectionProbe>(true)) { Reject("reflectionProbe", x, ""); break; }
-        foreach (var x in go.GetComponentsInChildren<Terrain>(true)) { Reject("terrain", x, ""); break; }
+        if (go.GetComponentsInChildren<Canvas>(true).Length > 0 || go.GetComponentsInChildren<ReflectionProbe>(true).Length > 0
+            || go.GetComponentsInChildren<Terrain>(true).Length > 0) eligible = false;
         foreach (var light in go.GetComponentsInChildren<Light>(true))
         {
-            if (light.type == LightType.Directional) { Reject("directionalLight", light, ""); continue; }
             var p = light.transform.position; float r = light.range;
-            if (!SectionCullState.FootprintInRing(p.x - r, p.x + r, p.z - r, p.z + r, c.Sx, c.Sz, _w, _h))
-                Reject("lightOutsideRing", light, FormattableString.Invariant($"pos=({p.x:F1},{p.z:F1}) range={r:F1}"));
+            if (light.type == LightType.Directional || !SectionCullState.FootprintInRing(p.x - r, p.x + r, p.z - r, p.z + r, c.Sx, c.Sz, _w, _h))
+                eligible = false;
         }
 
         var renderers = go.GetComponentsInChildren<Renderer>(true);
@@ -335,10 +282,8 @@ static class FogCulling
             hidden[i] = j >= 0 && oldHidden[j];
             rects[i * 4] = -1;
             if (!Footprint(r, out float minX, out float maxX, out float minZ, out float maxZ, out bool batch, out bool empty))
-            { if (!empty) Reject("noFootprint", r, ""); continue; }
-            if (!SectionCullState.FootprintInRing(minX, maxX, minZ, maxZ, c.Sx, c.Sz, _w, _h))
-                Reject(batch ? "batchOutsideRing" : "rendererOutsideRing", r,
-                    FormattableString.Invariant($"x=[{minX:F1},{maxX:F1}] z=[{minZ:F1},{maxZ:F1}]"));
+            { if (!empty) eligible = false; continue; }
+            if (!SectionCullState.FootprintInRing(minX, maxX, minZ, maxZ, c.Sx, c.Sz, _w, _h)) eligible = false;
             // Batches are filtered per source model by BatchFogCulling; oversized renderers are never hidden.
             if (batch || maxX - minX > MaxRendererUnits || maxZ - minZ > MaxRendererUnits) continue;
             if (SectionCullState.TileRange(minX, maxX, _w, 1, out int x0, out int x1) &&
@@ -415,7 +360,6 @@ static class FogCulling
         bool want = c.Hidden[i] || c.OriginalForce[i];
         if (r.forceRenderingOff == want) return;
         r.forceRenderingOff = want;
-        _writes++;
     }
 
     static void RestoreAll()
@@ -435,35 +379,5 @@ static class FogCulling
         if (_errors <= 3) Plugin.I.Log.LogWarning($"fog culling released ({where}): {e.Message}");
         try { RestoreAll(); } catch (Exception) { }
         _cellLayer = false;
-    }
-
-    public static void Report()
-    {
-        if (!_installed || (_cells.Length == 0 && _grids.Count == 0)) return;
-        int inspected = 0, eligible = 0, revealed = 0;
-        foreach (var c in _cells) { if (c.Inspected) inspected++; if (c.Eligible) eligible++; }
-        foreach (bool t in _revealed) if (t) revealed++;
-        double ms = 1000.0 / Stopwatch.Frequency;
-        Plugin.I.Log.LogInfo(FormattableString.Invariant(
-            $"fog: cells={_cells.Length} inspected={inspected} eligible={eligible} deepFogCells={Deep.Count} cellLayer={_cellLayer} hiddenRenderers={_hiddenRenderers} revealedTiles={revealed}/{_revealed.Length} fogChanges={_fogChanges} forceWrites={_writes} swaps={_swapCalls} pollMaxMs={_pollMax * ms:F3} pollTotalMs={_pollTicks * ms:F1} inspectMs={_inspectTicks * ms:F1} errors={_errors}"));
-        // Orientation check: the revealed area in world units should sit around the camera's view.
-        int rx0 = int.MaxValue, rx1 = -1, rz0 = int.MaxValue, rz1 = -1;
-        for (int t = 0; t < _revealed.Length; t++)
-            if (_revealed[t]) { int x = t % _w, z = t / _w; rx0 = Math.Min(rx0, x); rx1 = Math.Max(rx1, x); rz0 = Math.Min(rz0, z); rz1 = Math.Max(rz1, z); }
-        var cam = Camera.main;
-        if (rx1 >= 0 && cam != null)
-        {
-            var cp = cam.transform.position; var cf = cam.transform.forward;
-            float k = cf.y < -0.01f ? -cp.y / cf.y : 0; // where the view centre meets the ground plane
-            Plugin.I.Log.LogInfo(FormattableString.Invariant(
-                $"fog: revealed world x=[{rx0 - _w / 2f - 0.5f:F1},{rx1 - _w / 2f + 0.5f:F1}] z=[{rz0 - _h / 2f - 0.5f:F1},{rz1 - _h / 2f + 0.5f:F1}] viewCentre=({cp.x + cf.x * k:F1},{cp.z + cf.z * k:F1})"));
-        }
-        if (!_rejectsLogged && inspected == _cells.Length && _cells.Length > 0)
-        {
-            _rejectsLogged = true;
-            foreach (var kv in Rejects) Plugin.I.Log.LogInfo($"fog: ineligible[{kv.Key}]={kv.Value} cells, e.g. {RejectExample[kv.Key]}");
-        }
-        BatchFogCulling.Report();
-        _pollTicks = _pollMax = _inspectTicks = 0; _swapCalls = 0; _fogChanges = 0;
     }
 }

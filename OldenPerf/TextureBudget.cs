@@ -72,10 +72,4 @@ static class TextureBudget
         if (now - _lowerSince < LowerAfterSeconds) return;
         _budgetMb = want; _setBudget(_budgetMb); _lowerSince = -1;
     }
-
-    public static string Brief() => FormattableString.Invariant($"tex={Current / 1048576}/{Desired / 1048576}MiB budget={_budgetMb:F0}");
-
-    public static string Describe() => _on
-        ? FormattableString.Invariant($"textures: current={Current / 1048576}MiB desired={Desired / 1048576}MiB nonStreaming={NonStreaming / 1048576}MiB total={(_total?.Invoke() ?? 0) / 1048576}MiB budget={_budgetMb:F0}MiB")
-        : FormattableString.Invariant($"textures: streaming off current={Current / 1048576}MiB nonStreaming={NonStreaming / 1048576}MiB total={(_total?.Invoke() ?? 0) / 1048576}MiB");
 }

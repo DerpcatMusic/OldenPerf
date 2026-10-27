@@ -3,5 +3,5 @@
   <ItemGroup><Compile Include="Program.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../OldenPerf/FogBatchIndices.cs" Link="FogBatchIndices.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../OldenPerf/NativeBatchArray.cs" Link="NativeBatchArray.cs" /></ItemGroup>
-  <ItemGroup><Compile Include="../OldenPerf/SampleWindow.cs" Link="SampleWindow.cs" /><Compile Include="../OldenPerf/DepthEquality.cs" Link="DepthEquality.cs" /><Compile Include="../OldenPerf/SectionCullState.cs" Link="SectionCullState.cs" /><Compile Include="../OldenPerf/HookPlan.cs" Link="HookPlan.cs" /><Compile Include="../OldenPerf/TextureBudgetMath.cs" Link="TextureBudgetMath.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../OldenPerf/DepthEquality.cs" Link="DepthEquality.cs" /><Compile Include="../OldenPerf/SectionCullState.cs" Link="SectionCullState.cs" /><Compile Include="../OldenPerf/HookPlan.cs" Link="HookPlan.cs" /><Compile Include="../OldenPerf/TextureBudgetMath.cs" Link="TextureBudgetMath.cs" /></ItemGroup>
 </Project>

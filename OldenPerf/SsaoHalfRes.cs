@@ -12,7 +12,6 @@ static class SsaoHalfRes
 {
     static bfq _settings;
     static SSAOQuality _saved;
-    static bool _logged;
 
     public static void Init(Harmony harmony)
     {
@@ -30,7 +29,6 @@ static class SsaoHalfRes
         _settings = null;
         if (!Plugin.I.SsaoHalfResolution.Value) return;
         var s = bfu.lvd()?._bxra_k__BackingField;
-        if (s != null && !_logged) { _logged = true; Plugin.I.Log.LogInfo($"ssao: game setting {s._bxpe_k__BackingField}"); }
         if (s == null || s._bxpe_k__BackingField != SSAOQuality.High) return;
         _settings = s;
         _saved = s._bxpe_k__BackingField;
