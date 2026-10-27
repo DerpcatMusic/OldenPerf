@@ -12,7 +12,7 @@ namespace OldenPerf;
 public class Plugin : BasePlugin
 {
     internal static Plugin I;
-    internal ConfigEntry<bool> FogCullingOn, SsaoHalfResolution;
+    internal ConfigEntry<bool> FogCullingOn, SsaoHalfResolution, UiTextureResidency;
     internal ConfigEntry<int> BackgroundFps;
     internal string OutDir;
 
@@ -24,6 +24,7 @@ public class Plugin : BasePlugin
 
         FogCullingOn = Config.Bind("Fog", "Culling", true, "Don't draw, activate or simulate anything under fog of war.");
         SsaoHalfResolution = Config.Bind("Ssao", "HalfResolution", true, "Render SSAO through the game's own half-size path when it is set to High.");
+        UiTextureResidency = Config.Bind("Textures", "UiResidency", true, "Unload UI sprite pages no window has shown for 30 s; they reload from disk when needed.");
         bool streaming = Config.Bind("Textures", "Streaming", true, "Mip streaming with a budget that follows what the view needs. Restart required.").Value;
         int maxReduction = Config.Bind("Textures", "StreamingMaxReduction", 2, "Lowest mip streaming may fall back to under memory pressure. Restart required.").Value;
         bool trimDepth = Config.Bind("Memory", "TrimDepthCopy", true, "Depth copy without the unused stencil (enabled only after an equality check). Restart required.").Value;
@@ -33,6 +34,7 @@ public class Plugin : BasePlugin
         if (trimDepth) NativeDepth.Init(new HarmonyLib.Harmony("derpcat.oldenperf.native-depth"));
         SsaoHalfRes.Init(new HarmonyLib.Harmony("derpcat.oldenperf.ssao"));
         IconSprites.Init(new HarmonyLib.Harmony("derpcat.oldenperf.icon-sprites"));
+        FontAtlases.Init(new HarmonyLib.Harmony("derpcat.oldenperf.fonts"));
 
         ClassInjector.RegisterTypeInIl2Cpp<Runner>();
         var go = new GameObject("OldenPerf");
@@ -59,7 +61,7 @@ public class Runner : MonoBehaviour
         TextureBudget.Tick(Time.realtimeSinceStartup);
         string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
         NativeDepth.Tick(scene);
-        FontAtlases.Tick(scene);
+        FontAtlases.Tick(scene); UiTextures.Tick(scene);
 
         // Background cap: restore the game's own frame settings when focus returns.
         int fps = Plugin.I.BackgroundFps.Value;
