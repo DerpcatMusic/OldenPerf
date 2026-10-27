@@ -62,6 +62,7 @@ public class Runner : MonoBehaviour
         string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
         NativeDepth.Tick(scene);
         FontAtlases.Tick(scene); UiTextures.Tick(scene);
+        CameraHdr.Tick(Time.realtimeSinceStartup);
 
         // Background cap: restore the game's own frame settings when focus returns.
         int fps = Plugin.I.BackgroundFps.Value;
