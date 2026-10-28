@@ -12,7 +12,6 @@ namespace OldenPerf;
 static class IconSprites
 {
     [ThreadStatic] static bool _inIcon;
-    static int _created;
 
     public static void Init(Harmony harmony)
     {
@@ -36,7 +35,6 @@ static class IconSprites
     {
         if (!_inIcon) return true;
         __result = Sprite.Create(texture, rect, pivot, pixelsPerUnit, 0, SpriteMeshType.FullRect);
-        if (_created++ == 0) Plugin.I.Log.LogInfo($"icon sprites: first full-rect icon {rect.width}x{rect.height}");
         return false;
     }
 }

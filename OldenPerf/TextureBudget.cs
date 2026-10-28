@@ -22,7 +22,7 @@ static class TextureBudget
     static bool _on;
     static float _budgetMb, _nextPoll, _lowerSince = -1;
 
-    public const float HeadroomMb = 384, StartMb = 6144, FloorMb = 1024, CeilingMb = 7168, PollSeconds = 0.5f, LowerAfterSeconds = 10f;
+    public const float HeadroomMb = 384, StartMb = 1024, FloorMb = 1024, CeilingMb = 7168, PollSeconds = 0.5f, LowerAfterSeconds = 10f;
 
     public static ulong Current => _current?.Invoke() ?? 0;
     public static ulong Desired => _desired?.Invoke() ?? 0;
@@ -49,7 +49,9 @@ static class TextureBudget
             Plugin.I.Log.LogInfo("mip streaming off (full mip chains resident)");
             return;
         }
-        // Start generous so the first frames never starve; the controller lowers it once desired is known.
+        // Start low: the controller raises the budget to desired + headroom within one poll. A generous start budget let the
+        // load stream in full mip chains that are dropped seconds later, and that peak is what pushed the game's buffers
+        // into system memory (GTT) on a shared 8 GB card, where they stay for the session.
         _budgetMb = StartMb;
         _setBudget(_budgetMb);
         Icall<SetI>("UnityEngine.QualitySettings::set_streamingMipmapsMaxLevelReduction")?.Invoke(maxReduction);
@@ -72,10 +74,4 @@ static class TextureBudget
         if (now - _lowerSince < LowerAfterSeconds) return;
         _budgetMb = want; _setBudget(_budgetMb); _lowerSince = -1;
     }
-
-    public static string Brief() => FormattableString.Invariant($"tex={Current / 1048576}/{Desired / 1048576}MiB budget={_budgetMb:F0}");
-
-    public static string Describe() => _on
-        ? FormattableString.Invariant($"textures: current={Current / 1048576}MiB desired={Desired / 1048576}MiB nonStreaming={NonStreaming / 1048576}MiB total={(_total?.Invoke() ?? 0) / 1048576}MiB budget={_budgetMb:F0}MiB")
-        : FormattableString.Invariant($"textures: streaming off current={Current / 1048576}MiB nonStreaming={NonStreaming / 1048576}MiB total={(_total?.Invoke() ?? 0) / 1048576}MiB");
 }

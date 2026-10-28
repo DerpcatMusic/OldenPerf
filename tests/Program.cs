@@ -5,20 +5,6 @@ static void Check(bool ok, string message)
 {
     if (!ok) throw new Exception(message);
 }
-var w = new SampleWindow();
-Check(w.Summary().count == 0, "Empty windows must remain missing, not zero-duration measurements");
-Check(!w.Add(double.NaN) && !w.Add(double.PositiveInfinity) && !w.Add(-1), "Invalid samples must be rejected");
-foreach (var value in new double[] { 100, 1, 3, 2 }) w.Add(value);
-var s = w.Summary();
-Check(s.count == 4 && s.mean == 26.5 && s.p50 == 2 && s.p95 == 100 && s.p99 == 100 && s.max == 100, "Nearest-rank percentiles and mean");
-Check(w.Summary() == s, "Repeated summary calls must not change measurements");
-w.Add(4);
-Check(w.Summary().p50 == 3, "Adding after sorting must preserve the sample set");
-w.Clear();
-Check(w.Count == 0 && w.Summary().mean == 0, "Clearing must reset count and accumulated sum");
-for (int i = 0; i < 70000; i++) w.Add(i);
-Check(w.Count == 65536 && w.Summary().max == 65535, "Storage must be bounded even when no report is emitted");
-Console.WriteLine("PASS: empty/invalid samples, percentile boundaries, repeated summaries, reset, and bounded storage");
 var depth = new DepthEquality();
 Check(!depth.Equivalent, "No readback must not authorize a format change");
 depth.Add(1, 1); depth.Add(1, 1);

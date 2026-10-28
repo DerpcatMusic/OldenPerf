@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -39,14 +38,10 @@ static class BatchFogCulling
     static readonly Dictionary<IntPtr, Pending> Building = new();
     // Source meshes repeat across thousands of placed models; Mesh.bounds is an interop call, so read it once per mesh.
     static readonly Dictionary<IntPtr, Bounds> MeshBounds = new();
-    static long _hookTicks;
-    static int _hookCalls;
     static readonly List<Batch> Batches = new();
-    static readonly Dictionary<string, int> Rejections = new();
     static bool _installed, _dirty;
-    static int _revision = -1, _errors, _rejected, _captured, _uploads, _sourceReadFailures;
-    static long _retainedIndices, _hiddenIndices, _hiddenParts, _keptIndices;
-    static double _updateMs;
+    static int _revision = -1, _errors, _sourceReadFailures;
+    static long _retainedIndices;
     static int _indexOffset, _vertexIdOffset, _instanceOffset;
     static readonly BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
 
@@ -75,7 +70,6 @@ static class BatchFogCulling
                     postfix: part ? null : Hook(nameof(BatchCreated)));
             }
             _installed = true;
-            Plugin.I.Log.LogInfo($"batch fog armed: {selected.Length} native builder hooks; shader-instance mapping v4, shader-bounded deformation, native headers {_indexOffset:X}/{_vertexIdOffset:X}/{_instanceOffset:X}; initial map load required");
         }
         catch (Exception e)
         {
@@ -106,7 +100,6 @@ static class BatchFogCulling
     static unsafe void BeforePart(bzc __instance, Mesh __0, ushort __3)
     {
         if (!_installed || !Plugin.I.FogCullingOn.Value) return;
-        long start = Stopwatch.GetTimestamp();
         Pending p = null;
         try
         {
@@ -114,7 +107,7 @@ static class BatchFogCulling
                 Building[__instance.Pointer] = p = new Pending();
             p.Models[__3] = default;
             var data = ReadArray(__instance, _instanceOffset, 4096);
-            if (__3 >= data.Length) { _sourceReadFailures++; return; }
+            if (__3 >= data.Length) return;
             var instance = ((bzc.InstanceData*)data.Buffer)[__3];
             var m = instance.objectToWorld;
             if (!MeshBounds.TryGetValue(__0.Pointer, out var b)) MeshBounds[__0.Pointer] = b = __0.bounds;
@@ -140,68 +133,48 @@ static class BatchFogCulling
             _sourceReadFailures++;
             if (_sourceReadFailures <= 2) Plugin.I.Log.LogWarning("batch fog source bounds unavailable: " + e);
         }
-        finally { Charge(start); }
     }
 
-    static void Charge(long start)
-    {
-        long t = Stopwatch.GetTimestamp() - start;
-        _hookTicks += t; _hookCalls++; Stats.ModTicks += t;
-    }
 
-    static void Reject(string reason, string detail = "")
-    {
-        _rejected++;
-        Rejections[reason] = Rejections.TryGetValue(reason, out int n) ? n + 1 : 1;
-        if (Rejections[reason] <= 2) Plugin.I.Log.LogWarning("batch fog capture rejected: " + reason + " " + detail);
-    }
-
+    // A batch that fails any check below is left untouched (drawn in full).
     static unsafe void BatchCreated(bzc __instance, Mesh __1)
     {
         if (!_installed || !Plugin.I.FogCullingOn.Value) return;
-        if (!Building.Remove(__instance.Pointer, out var p)) { Reject("missing-source-models"); return; }
-        long start = Stopwatch.GetTimestamp();
+        if (!Building.Remove(__instance.Pointer, out var p)) return;
         try
         {
             int count = checked((int)__1.GetIndexCount(0));
             // cbsv (+0xB0) is the index stream; cbsw (+0xC0) holds per-vertex instance IDs.
             var native = ReadArray(__instance, _indexOffset, MaxBatchIndices);
-            if (__1.subMeshCount != 1 || __1.indexFormat != IndexFormat.UInt16 || __1.GetTopology(0) != MeshTopology.Triangles)
-            { Reject("mesh-shape", $"submeshes={__1.subMeshCount} format={__1.indexFormat} topology={__1.GetTopology(0)}"); return; }
-            if (count <= 0 || count > MaxBatchIndices || native.Length < count)
-            { Reject("index-buffer", $"count={count} capacity={native.Length}"); return; }
-            if (_retainedIndices + count > MaxRetainedIndices) { Reject("capture-memory-limit"); return; }
+            if (__1.subMeshCount != 1 || __1.indexFormat != IndexFormat.UInt16 || __1.GetTopology(0) != MeshTopology.Triangles) return;
+            if (count <= 0 || count > MaxBatchIndices || native.Length < count) return;
+            if (_retainedIndices + count > MaxRetainedIndices) return;
             var ids = ReadArray(__instance, _vertexIdOffset, 65536);
             int vertices = __1.vertexCount;
-            if (ids.Length < vertices || vertices <= 0 || vertices > 65536)
-            { Reject("vertex-instance-map", $"vertices={vertices} capacity={ids.Length}"); return; }
+            if (ids.Length < vertices || vertices <= 0 || vertices > 65536) return;
             var original = new ushort[count];
             new ReadOnlySpan<ushort>(native.Buffer.ToPointer(), count).CopyTo(original);
             var vertexInstances = new ushort[vertices];
             new ReadOnlySpan<ushort>(ids.Buffer.ToPointer(), vertices).CopyTo(vertexInstances);
-            if (!FogBatchIndices.TryMap(original, vertexInstances, p.Models, out var parts) || !FogBatchIndices.Valid(original, parts, vertices))
-            { Reject("invalid-index-instance-map"); return; }
-            if (Batches.Any(b => b.Mesh != null && b.Mesh.Pointer == __1.Pointer)) { Reject("shared-generated-mesh"); return; }
+            if (!FogBatchIndices.TryMap(original, vertexInstances, p.Models, out var parts) || !FogBatchIndices.Valid(original, parts, vertices)) return;
+            if (Batches.Any(b => b.Mesh != null && b.Mesh.Pointer == __1.Pointer)) return;
             Batches.Add(new Batch { Mesh = __1, Original = original, Scratch = new ushort[count],
                 Upload = new Il2CppStructArray<ushort>(count), Parts = parts, Hidden = new bool[parts.Length],
                 NextHidden = new bool[parts.Length], Kept = count });
-            _retainedIndices += count; _captured++; _dirty = true;
+            _retainedIndices += count; _dirty = true;
         }
         catch (Exception e) { _errors++; if (_errors <= 2) Plugin.I.Log.LogWarning("batch fog capture refused: " + e); }
-        finally { Charge(start); }
     }
 
     public static void Update(int[] sat, int width, int height, int revision)
     {
         if (!_installed || (!_dirty && revision == _revision)) return;
-        var timer = Stopwatch.StartNew();
         _dirty = false; _revision = revision;
-        _hiddenIndices = _hiddenParts = _keptIndices = 0;
         for (int i = Batches.Count - 1; i >= 0; i--)
         {
             var b = Batches[i];
             if (b.Mesh == null) { _retainedIndices -= b.Original.Length; Batches.RemoveAt(i); continue; }
-            if (b.Disabled) { _keptIndices += b.Original.Length; continue; }
+            if (b.Disabled) continue;
             try
             {
                 FogBatchIndices.Classify(b.Parts, sat, width, height, b.NextHidden);
@@ -214,9 +187,6 @@ static class BatchFogCulling
                     Array.Copy(b.NextHidden, b.Hidden, b.Hidden.Length);
                     b.Kept = kept;
                 }
-                _keptIndices += b.Kept;
-                _hiddenIndices += b.Original.Length - b.Kept;
-                foreach (bool hidden in b.Hidden) if (hidden) _hiddenParts++;
             }
             catch (Exception e)
             {
@@ -226,7 +196,6 @@ static class BatchFogCulling
                 Plugin.I.Log.LogWarning("batch fog released: " + e.Message);
             }
         }
-        _updateMs = timer.Elapsed.TotalMilliseconds;
     }
 
     static void Submit(Batch b, ushort[] indices, int count)
@@ -234,7 +203,6 @@ static class BatchFogCulling
         indices.AsSpan(0, count).CopyTo(b.Upload.AsSpan());
         // calculateBounds=false is essential: shader positions live in external buffers, not this mesh's vertex data.
         b.Mesh.SetIndices(b.Upload, 0, count, MeshTopology.Triangles, 0, false, 0);
-        _uploads++;
     }
 
     // A new map: source-mesh pointers from the previous map may be reused by other meshes.
@@ -248,7 +216,7 @@ static class BatchFogCulling
             try { Submit(b, b.Original, b.Original.Length); b.Kept = b.Original.Length; Array.Clear(b.Hidden, 0, b.Hidden.Length); }
             catch (Exception e) { _errors++; Plugin.I.Log.LogError("batch fog restore failed: " + e.Message); }
         }
-        _revision = -1; _dirty = true; _hiddenIndices = _hiddenParts = 0; _keptIndices = _retainedIndices;
+        _revision = -1; _dirty = true;
     }
 
     // The true world extent of a captured batch: the union of its source-model footprints. The generated mesh's own bounds are
@@ -270,13 +238,5 @@ static class BatchFogCulling
             return true;
         }
         return false;
-    }
-
-    public static void Report()
-    {
-        long models = 0, unbounded = 0;
-        foreach (var b in Batches) foreach (var p in b.Parts) { models++; if (!p.Cullable) unbounded++; }
-        Plugin.I.Log.LogInfo(FormattableString.Invariant($"batch fog: batches={Batches.Count} captured={_captured} rejected={_rejected} models={models} preservedUnboundedModels={unbounded} hiddenModels={_hiddenParts} originalMeshTriangles={_retainedIndices / 3} removedMeshTriangles={_hiddenIndices / 3} retainedMeshTriangles={_keptIndices / 3} uploads={_uploads} lastUpdateMs={_updateMs:F3} hookCalls={_hookCalls} hookMs={_hookTicks * 1000.0 / Stopwatch.Frequency:F1} meshBounds={MeshBounds.Count} sourceReadFailures={_sourceReadFailures} errors={_errors}"));
-        if (Rejections.Count > 0) Plugin.I.Log.LogInfo("batch fog rejection reasons: " + string.Join(", ", Rejections.Select(p => $"{p.Key}={p.Value}")));
     }
 }
