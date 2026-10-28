@@ -55,8 +55,10 @@ Frame time follows that spill: the same map ran at 33 ms with 364 MiB in GTT and
   `SpriteRenderer` has used for 30 s is unloaded with `Resources.UnloadAsset`; Unity reloads it through the
   sprite's reference when a window needs it, and a page reloaded once stays resident. — The map scene loads
   ~730 MiB of UI art for closed windows; ~690 MiB of it goes. Map frame 55 → 32 ms in the run that measured it.
-- **Load peak cut** — entering a loading screen unloads every page it doesn't show before the next scene
-  allocates, and mip streaming starts at its floor budget and rises within half a second. — A generous start
+- **Load peak cut** — while a loading screen is up, every UI page it doesn't show is unloaded once a second,
+  including the ~700 MiB the incoming map pulls in, before the map allocates its own buffers; each sprite's page is
+  inspected once (reading `Sprite.texture` reloads an unloaded page). Mip streaming starts at its floor budget and
+  rises within half a second. — Peak VRAM during the map load 3,905 → 3,489 MiB. — A generous start
   budget streamed full mip chains during the load and dropped them seconds later; that peak is what spilled.
 - **Other-language fonts at half size** — static Chinese/Japanese/Korean TextMeshPro atlases that no text uses are
   swapped for half-size copies (signed distance fields scale cleanly); the original reloads on the next loading
@@ -96,7 +98,9 @@ the desktop leaves free.
 | Longest loading frame (audio decode) | 5 s | 0.5 s |
 | Loading screen | 13–23 s | 7–10 s |
 | Town entry after the UI unload, worst frame | — | 1,555 → 246 ms (pin after first reload) |
-| Game memory spilled to GTT, map | 659 MiB | 364 MiB |
+| Peak VRAM requested during the map load | 3,905 MiB | 3,489 MiB |
+| Game memory spilled to GTT, map (8 GB card shared with desktop) | 659 MiB | 364 MiB |
+| Map frame, everything resident (GPU-bound) | 20.3 ms | 18.8 ms |
 
 ## Tried and dropped
 
@@ -107,6 +111,9 @@ the desktop leaves free.
   better.
 - **Bloom fast mode / no NaN pass** — gains too small to measure reliably against the risk. The NaN pass is a
   full 4K copy, but the game turned it on deliberately and one frame can't prove NaNs never happen.
+- **Pausing GC during loads** — no faster, and a 400–800 ms collection when it resumed.
+- **R11G11B10 post-processing buffers** — the uber pass stores tone-mapped colour there; 6/5-bit mantissas band
+  bright gradients.
 - **Lighter depth of field** — the 4K bokeh DoF chain is the most expensive post effect, but it is part of the look.
 
 ## For the developers
@@ -124,7 +131,13 @@ Native fixes that would make most of this mod unnecessary:
 9. Keep the load's VRAM peak low: release the previous scene's assets before loading the next, and don't start mip
    streaming with an unlimited budget.
 10. Warm up TextMeshPro and particles during loading; the first Alt press still stalls ~0.7 s, and the first map
-    frame spends ~2 s in `ParticleSystemRenderer::UpdateCachedMesh`.
+    frame spends ~2 s in `ParticleSystemRenderer::UpdateCachedMesh` for 9,537 mesh-mode particle renderers, of
+    which 117 are active.
+11. Pool less: the test map holds 435,145 GameObjects, 27,201 TextMeshPro texts (9 active) and 2,705 skinned fish
+    (none active); that is most of the 5.6 GB of process memory and much of the load.
+12. Frame structure (RenderDoc, 4K, everything resident): the depth/normal prepass (6.8 ms) and the forward pass
+    (5.4 ms) both run the full terrain shader on four screen-sized draws; three full 4K RGBA16F copies per frame
+    (2.1 ms) come from a before-transparent effect and PPv2 copying the camera target out and back.
 
 ## Install
 
