@@ -14,10 +14,11 @@ namespace OldenPerf;
 // Runtime-created textures, readable textures, mipped (streamed) textures and font atlases are never touched.
 static class UiTextures
 {
-    const float ScanSeconds = 5f, IdleSeconds = 30f;
+    const float ScanSeconds = 5f, IdleSeconds = 30f, LoadScanSeconds = 1f;
     const long MinBytes = 256 * 1024;
     sealed class Page { public Texture2D Tex; public float Used; public long Bytes; }
     static readonly HashSet<int> Pinned = new();
+    static readonly HashSet<int> SeenSprites = new();
     static readonly Dictionary<int, Page> Loaded = new();   // instance ID -> resident sprite page
     static readonly Dictionary<int, long> Unloaded = new(); // instance ID -> bytes, until something uses it again
     static string _scene;
@@ -36,12 +37,15 @@ static class UiTextures
             {
                 _scene = scene;
                 if (!loading) { CollectPages(); return; } // first frame of a scene: stall hidden by the load
-                // Entering a load: drop every page the loading screen does not show now, before the next scene allocates,
-                // so the load's VRAM peak does not spill the new scene's buffers into system memory.
+                // During a load: drop every page the loading screen does not show, once a second, including pages the
+                // incoming scene has just loaded (its window prefabs pull in ~730 MiB of icon atlases). Unity loads and
+                // uploads them before the map allocates its own buffers; freeing them as they arrive keeps that peak from
+                // spilling the map's buffers into system memory. The HUD reloads the few it shows on the first frame.
                 _next = 0;
             }
-            else if (loading || now < _next) return;
-            _next = now + ScanSeconds;
+            else if (now < _next) return;
+            _next = now + (loading ? LoadScanSeconds : ScanSeconds);
+            if (loading) CollectPages(log: false);
             float idleBefore = loading ? now : now - IdleSeconds;
             var sw = Stopwatch.StartNew();
             // Unsorted: FindObjectsOfType sorts every result by instance ID, a third of the scan on the map.
@@ -82,7 +86,7 @@ static class UiTextures
     }
 
     // Sprite pages that are on-disk assets (positive instance ID), not readable, single mip, not a font atlas.
-    static void CollectPages()
+    static void CollectPages(bool log = true)
     {
         var sw = Stopwatch.StartNew();
         float now = Time.realtimeSinceStartup;
@@ -93,7 +97,10 @@ static class UiTextures
         double findMs = sw.Elapsed.TotalMilliseconds;
         foreach (var s in sprites)
         {
-            var t = s != null ? s.texture : null;
+            // Sprite.texture loads an unloaded page from disk, so each sprite is read once. Its page is then tracked,
+            // pinned or ineligible; reading it again on the next scene would bring every unloaded page back.
+            if (s == null || !SeenSprites.Add(s.GetInstanceID())) continue;
+            var t = s.texture;
             if (t == null) continue;
             int id = t.GetInstanceID();
             if (id <= 0 || Pinned.Contains(id) || Loaded.ContainsKey(id) || t.isReadable || t.mipmapCount != 1 || t.format == TextureFormat.Alpha8) continue;
@@ -102,6 +109,7 @@ static class UiTextures
             Unloaded.Remove(id);
             Loaded[id] = new Page { Tex = t, Used = now, Bytes = bytes };
         }
+        if (!log) return;
         long total = 0; foreach (var p in Loaded.Values) total += p.Bytes;
         Plugin.I.Log.LogInfo($"ui textures: {Loaded.Count} sprite pages resident ({total / 1048576} MiB), collected in {sw.Elapsed.TotalMilliseconds:F0} ms ({sprites.Length} sprites, find {findMs:F0} ms)");
     }
