@@ -134,7 +134,7 @@ Native fixes that would make most of this mod unnecessary:
     frame spends ~2 s in `ParticleSystemRenderer::UpdateCachedMesh` for 9,537 mesh-mode particle renderers, of
     which 117 are active.
 11. Pool less: the test map holds 435,145 GameObjects, 27,201 TextMeshPro texts (9 active) and 2,705 skinned fish
-    (none active); that is most of the 5.6 GB of process memory and much of the load.
+    (none active), next to 5.6 GB of process memory (2.9 GB engine heap, 1.2 GB script heap).
 12. Frame structure (RenderDoc, 4K, everything resident): the depth/normal prepass (6.8 ms) and the forward pass
     (5.4 ms) both run the full terrain shader on four screen-sized draws; three full 4K RGBA16F copies per frame
     (2.1 ms) come from a before-transparent effect and PPv2 copying the camera target out and back.
